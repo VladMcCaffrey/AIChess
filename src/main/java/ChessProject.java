@@ -148,7 +148,7 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
 
     private ImageIcon loadIcon(String filename) {
         try {
-            File iconFile = new File("./pieces/" + filename);
+            File iconFile = new File("./src/main/resources/pieces/" + filename);
 
             // Check if file exists
             if (!iconFile.exists()) {
@@ -938,6 +938,44 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
         }
     }
 
+
+    /**
+     * Extracts current board state as an 8x8 String array.
+     * Returns piece names like "WhitePawn", "BlackKing", or "empty".
+     */
+    private String[][] getBoardState() {
+        String[][] board = new String[8][8];
+
+        for (int row = 0; row < 8; row++) {
+            for (int col = 0; col < 8; col++) {
+                int panelIndex = row * 8 + col;
+                JPanel square = (JPanel) chessBoard.getComponent(panelIndex);
+
+                if (square.getComponentCount() > 0) {
+                    Component comp = square.getComponent(0);
+                    if (comp instanceof JLabel) {
+                        JLabel pieceLabel = (JLabel) comp;
+                        String iconPath = pieceLabel.getIcon().toString();
+
+                        // Extract piece name from icon path
+                        int slash = Math.max(iconPath.lastIndexOf("/"), iconPath.lastIndexOf("\\"));
+                        String name = (slash >= 0) ? iconPath.substring(slash + 1) : iconPath;
+                        if (name.toLowerCase().endsWith(".png")) {
+                            name = name.substring(0, name.length() - 4);
+                        }
+                        board[row][col] = name;
+                    } else {
+                        board[row][col] = "empty";
+                    }
+                } else {
+                    board[row][col] = "empty";
+                }
+            }
+        }
+
+        return board;
+    }
+
     private void makeAIMove() {
         /*
          * When the AI Agent decides on a move, a red border shows the square from where
@@ -1058,7 +1096,7 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
 
                     if (startingPoint.getName().contains("WhitePawn") && landingPoint.getYC() == 7) {
                         parentlanding.remove(0);
-                        pieces = new JLabel(new ImageIcon("./pieces/WhiteQueen.png"));
+                        pieces = new JLabel(new ImageIcon("./src/main/resources/piecesWhiteQueen.png"));
                         landingPanelID = (landingPoint.getYC() * 8) + landingPoint.getXC();
                         panels = (JPanel) chessBoard.getComponent(landingPanelID);
                         panels.add(pieces);
@@ -1119,7 +1157,7 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
 
                     if (startingPoint.getName().contains("WhitePawn") && landingPoint.getYC() == 7) {
                         parentlanding.remove(0);
-                        pieces = new JLabel(new ImageIcon("./pieces/WhiteQueen.png"));
+                        pieces = new JLabel(new ImageIcon("./src/main/resources/piecesWhiteQueen.png"));
                         landingPanelID = (landingPoint.getYC() * 8) + landingPoint.getXC();
                         panels = (JPanel) chessBoard.getComponent(landingPanelID);
                         panels.add(pieces);
@@ -1136,8 +1174,10 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
                 white2Move = false;
             } else if (userChoice == 2) {
                 System.out.println("=============================================================");
+                System.out.println("AI: Using minimax with alpha-beta pruning (depth 3)");
                 Border redBorder = BorderFactory.createLineBorder(Color.RED, 3);
-                Move selectedMove = agent.twoLevelsDeep(testing, black, 2);
+                String[][] boardState = getBoardState();
+                Move selectedMove = agent.minimaxMove(testing, black, 3, boardState);
                 Square startingPoint = (Square) selectedMove.getStart();
                 Square landingPoint = (Square) selectedMove.getLanding();
                 int startX1 = (startingPoint.getXC() * 75) + 20;
@@ -1180,7 +1220,7 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
 
                     if (startingPoint.getName().contains("WhitePawn") && landingPoint.getYC() == 7) {
                         parentlanding.remove(0);
-                        pieces = new JLabel(new ImageIcon("./pieces/WhiteQueen.png"));
+                        pieces = new JLabel(new ImageIcon("./src/main/resources/piecesWhiteQueen.png"));
                         landingPanelID = (landingPoint.getYC() * 8) + landingPoint.getXC();
                         panels = (JPanel) chessBoard.getComponent(landingPanelID);
                         panels.add(pieces);
@@ -1223,7 +1263,7 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
             JLabel awaitingPiece = (JLabel) c1;
             String tmp1 = awaitingPiece.getIcon().toString();
             // Extract just the filename without extension from the full path.
-            // Handles both full paths (/Users/..././pieces/BlackKing.png) and bare names (BlackKing.png)
+            // Handles both full paths (/Users/.../src/main/resources/piecesBlackKing.png) and bare names (BlackKing.png)
             int slash = Math.max(tmp1.lastIndexOf("/"), tmp1.lastIndexOf("\\"));
             String name = (slash >= 0) ? tmp1.substring(slash + 1) : tmp1;
             if (name.toLowerCase().endsWith(".png")) name = name.substring(0, name.length() - 4);
@@ -1241,19 +1281,176 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
         }
     }
 
-  /*
-   * This method is called when we press the Mouse. So we need to find out what
-   * piece we have selected. We may also not have selected a piece!
-   */
-  public void mousePressed(MouseEvent e) {
-    chessPiece = null;
-    String name = getPieceName(e.getX(), e.getY());
-    /*
-     * if(moveCounter == 0){ makeAIMove(); }
+
+    /**
+     * Highlights all valid destination squares for any piece in green (empty squares)
+     * or red (capturable enemy squares). Called on mousePressed.
      */
-    Component c = chessBoard.findComponentAt(e.getX(), e.getY());
-    if (c instanceof JPanel)
-      return;
+    private void highlightValidMoves(int sx, int sy, String pieceName) {
+        Border greenBorder  = BorderFactory.createLineBorder(new Color(0, 200, 0), 3);
+        Border redBorder    = BorderFactory.createLineBorder(Color.RED, 3);
+        boolean isBlack     = pieceName.contains("Black");
+
+        // ── Helper: highlight one square if valid ─────────────────────────
+        // green = empty & reachable, red = enemy piece capturable
+        // returns false if a piece is blocking (used to stop sliding-piece loops)
+
+        // ── Black Pawn ─────────────────────────────────────────────────────
+        if (pieceName.equals("BlackPawn")) {
+            // Forward 1
+            if (sy - 1 >= 0) {
+                int px = sx * 75 + 20, py = (sy - 1) * 75 + 20;
+                if (!piecePresent(px, py)) {
+                    ((JPanel) chessBoard.getComponent((sy - 1) * 8 + sx)).setBorder(greenBorder);
+                    // Forward 2 from start row
+                    if (sy == 6) {
+                        int py2 = (sy - 2) * 75 + 20;
+                        if (!piecePresent(px, py2))
+                            ((JPanel) chessBoard.getComponent((sy - 2) * 8 + sx)).setBorder(greenBorder);
+                    }
+                }
+            }
+            // Diagonal captures
+            for (int dx : new int[]{sx - 1, sx + 1}) {
+                if (dx >= 0 && dx <= 7 && sy - 1 >= 0) {
+                    int px = dx * 75 + 20, py = (sy - 1) * 75 + 20;
+                    if (piecePresent(px, py) && checkBlackOponent(px, py))
+                        ((JPanel) chessBoard.getComponent((sy - 1) * 8 + dx)).setBorder(redBorder);
+                }
+            }
+
+            // ── White Pawn ─────────────────────────────────────────────────────
+        } else if (pieceName.equals("WhitePawn")) {
+            // Forward 1 (up the screen = decreasing Y)
+            if (sy + 1 <= 7) {
+                int px = sx * 75 + 20, py = (sy + 1) * 75 + 20;
+                if (!piecePresent(px, py)) {
+                    ((JPanel) chessBoard.getComponent((sy + 1) * 8 + sx)).setBorder(greenBorder);
+                    // Forward 2 from start row
+                    if (sy == 1) {
+                        int py2 = (sy + 2) * 75 + 20;
+                        if (!piecePresent(px, py2))
+                            ((JPanel) chessBoard.getComponent((sy + 2) * 8 + sx)).setBorder(greenBorder);
+                    }
+                }
+            }
+            // Diagonal captures
+            for (int dx : new int[]{sx - 1, sx + 1}) {
+                if (dx >= 0 && dx <= 7 && sy + 1 <= 7) {
+                    int px = dx * 75 + 20, py = (sy + 1) * 75 + 20;
+                    if (piecePresent(px, py) && checkWhiteOponent(px, py))
+                        ((JPanel) chessBoard.getComponent((sy + 1) * 8 + dx)).setBorder(redBorder);
+                }
+            }
+
+            // ── Knight ─────────────────────────────────────────────────────────
+        } else if (pieceName.contains("Knight")) {
+            int[][] jumps = {{-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}};
+            for (int[] j : jumps) {
+                int tx = sx + j[0], ty = sy + j[1];
+                if (tx < 0 || tx > 7 || ty < 0 || ty > 7) continue;
+                int px = tx * 75 + 20, py = ty * 75 + 20;
+                if (!piecePresent(px, py)) {
+                    ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(greenBorder);
+                } else if (isBlack ? checkBlackOponent(px, py) : checkWhiteOponent(px, py)) {
+                    ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(redBorder);
+                }
+            }
+
+            // ── Rook ───────────────────────────────────────────────────────────
+        } else if (pieceName.contains("Rook")) {
+            highlightStraightLines(sx, sy, isBlack, greenBorder, redBorder);
+
+            // ── Bishop ─────────────────────────────────────────────────────────
+        } else if (pieceName.contains("Bishop")) {
+            highlightDiagonals(sx, sy, isBlack, greenBorder, redBorder);
+
+            // ── Queen ──────────────────────────────────────────────────────────
+        } else if (pieceName.contains("Queen")) {
+            highlightStraightLines(sx, sy, isBlack, greenBorder, redBorder);
+            highlightDiagonals(sx, sy, isBlack, greenBorder, redBorder);
+
+            // ── King ───────────────────────────────────────────────────────────
+        } else if (pieceName.contains("King")) {
+            int[][] steps = {{-1,-1},{-1,0},{-1,1},{0,-1},{0,1},{1,-1},{1,0},{1,1}};
+            for (int[] s : steps) {
+                int tx = sx + s[0], ty = sy + s[1];
+                if (tx < 0 || tx > 7 || ty < 0 || ty > 7) continue;
+                int px = tx * 75 + 20, py = ty * 75 + 20;
+                if (!piecePresent(px, py)) {
+                    ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(greenBorder);
+                } else if (isBlack ? checkBlackOponent(px, py) : checkWhiteOponent(px, py)) {
+                    ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(redBorder);
+                }
+            }
+        }
+    }
+
+    /** Highlights all 4 straight-line directions (Rook / Queen). */
+    private void highlightStraightLines(int sx, int sy, boolean isBlack,
+                                        Border greenBorder, Border redBorder) {
+        int[][] dirs = {{1,0},{-1,0},{0,1},{0,-1}};
+        for (int[] d : dirs) {
+            for (int step = 1; step < 8; step++) {
+                int tx = sx + d[0] * step, ty = sy + d[1] * step;
+                if (tx < 0 || tx > 7 || ty < 0 || ty > 7) break;
+                int px = tx * 75 + 20, py = ty * 75 + 20;
+                if (!piecePresent(px, py)) {
+                    ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(greenBorder);
+                } else {
+                    if (isBlack ? checkBlackOponent(px, py) : checkWhiteOponent(px, py))
+                        ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(redBorder);
+                    break; // blocked — stop looking further in this direction
+                }
+            }
+        }
+    }
+
+    /** Highlights all 4 diagonal directions (Bishop / Queen). */
+    private void highlightDiagonals(int sx, int sy, boolean isBlack,
+                                    Border greenBorder, Border redBorder) {
+        int[][] dirs = {{1,1},{1,-1},{-1,1},{-1,-1}};
+        for (int[] d : dirs) {
+            for (int step = 1; step < 8; step++) {
+                int tx = sx + d[0] * step, ty = sy + d[1] * step;
+                if (tx < 0 || tx > 7 || ty < 0 || ty > 7) break;
+                int px = tx * 75 + 20, py = ty * 75 + 20;
+                if (!piecePresent(px, py)) {
+                    ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(greenBorder);
+                } else {
+                    if (isBlack ? checkBlackOponent(px, py) : checkWhiteOponent(px, py))
+                        ((JPanel) chessBoard.getComponent(ty * 8 + tx)).setBorder(redBorder);
+                    break; // blocked — stop looking further in this direction
+                }
+            }
+        }
+    }
+
+    /**
+     * Clears all highlight borders from the board (resets to empty border).
+     */
+    private void clearHighlights() {
+        Border empty = BorderFactory.createEmptyBorder();
+        for (int i = 0; i < 64; i++) {
+            JPanel sq = (JPanel) chessBoard.getComponent(i);
+            // Only clear green/red highlight borders, not red AI move borders
+            sq.setBorder(empty);
+        }
+    }
+
+    /*
+     * This method is called when we press the Mouse. So we need to find out what
+     * piece we have selected. We may also not have selected a piece!
+     */
+    public void mousePressed(MouseEvent e) {
+        chessPiece = null;
+        String name = getPieceName(e.getX(), e.getY());
+        /*
+         * if(moveCounter == 0){ makeAIMove(); }
+         */
+        Component c = chessBoard.findComponentAt(e.getX(), e.getY());
+        if (c instanceof JPanel)
+            return;
 
         Point parentLocation = c.getParent().getLocation();
         xAdjustment = parentLocation.x - e.getX();
@@ -1268,10 +1465,16 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
             getKnightMoves(startX, startY, name);
         }
 
-    chessPiece.setLocation(e.getX() + xAdjustment, e.getY() + yAdjustment);
-    chessPiece.setSize(chessPiece.getWidth(), chessPiece.getHeight());
-    layeredPane.add(chessPiece, JLayeredPane.DRAG_LAYER);
-  }
+        // Highlight valid destination squares for the current player's pieces
+        if ((!white2Move && name.contains("Black")) || (white2Move && name.contains("White"))) {
+            clearHighlights();
+            highlightValidMoves(startX, startY, name);
+        }
+
+        chessPiece.setLocation(e.getX() + xAdjustment, e.getY() + yAdjustment);
+        chessPiece.setSize(chessPiece.getWidth(), chessPiece.getHeight());
+        layeredPane.add(chessPiece, JLayeredPane.DRAG_LAYER);
+    }
 
     public void mouseDragged(MouseEvent me) {
         if (chessPiece == null)
@@ -1287,14 +1490,15 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
         if (chessPiece == null)
             return;
 
-    chessPiece.setVisible(false);
-    Boolean success = false;
-    Boolean promotion = false;
-    Boolean progression = false;
-    Component c = chessBoard.findComponentAt(e.getX(), e.getY());
+        clearHighlights(); // Remove all square highlights when piece is dropped
+        chessPiece.setVisible(false);
+        Boolean success = false;
+        Boolean promotion = false;
+        Boolean progression = false;
+        Component c = chessBoard.findComponentAt(e.getX(), e.getY());
 
         String tmp = chessPiece.getIcon().toString();
-        // getIcon().toString() may return a full path (/Users/..././pieces/BlackPawn.png)
+        // getIcon().toString() may return a full path (/Users/.../src/main/resources/piecesBlackPawn.png)
         // or a bare name (BlackPawn.png) depending on how the icon was loaded.
         // Strip any leading path (everything up to last / or \) and strip .png extension.
         String pieceName = tmp;
@@ -1968,7 +2172,7 @@ public class ChessProject extends JFrame implements MouseListener, MouseMotionLi
         frame.setResizable(true);
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
-        Object[] options = {"Random Move", "Best Next Move", "Two Level Deep"};
+        Object[] options = {"Random Move", "Best Next Move", "Three Level Deep"};
         int n = JOptionPane.showOptionDialog(frame, "Start game by choosing your AI opponent Agent.", "Introduction to Artifical Intelligence by Vladislavs Vasiljevs x15493322", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[2]);
         userChoice = n;
         try {
